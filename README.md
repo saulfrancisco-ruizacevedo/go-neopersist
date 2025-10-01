@@ -109,24 +109,24 @@ if err := userRepo.Save(ctx, &userToCreate); err != nil {
 }
 fmt.Println("User saved successfully.")
 
-	// --- 2. READ: Find the newly created user by their ID ---
-	// We call the FindByID method, which now executes a query against the database.
-	// It returns a pointer to the found entity (*models.User) or an error.
-	fmt.Printf("\nSearching for user with ID '%s'...\n", userToCreate.UserID)
-	foundUser, err := userRepo.FindByID(ctx, userToCreate.UserID)
+// --- 2. READ: Find the newly created user by their ID ---
+// We call the FindByID method, which now executes a query against the database.
+// It returns a pointer to the found entity (*models.User) or an error.
+fmt.Printf("\nSearching for user with ID '%s'...\n", userToCreate.UserID)
+foundUser, err := userRepo.FindByID(ctx, userToCreate.UserID)
 
-	// It is critical to handle the error case first.
-	if err != nil {
-		// A best practice is to specifically check for the ErrNotFound error.
-		// This allows you to distinguish between "not found" and other database failures.
-		if errors.Is(err, neopersist.ErrNotFound) {
-			fmt.Printf("User with ID '%s' was not found.\n", userToCreate.UserID)
-		} else {
-			// Handle any other potential errors (e.g., connection issues).
-			fmt.Printf("An unexpected error occurred while searching for the user: %v\n", err)
-		}
-		return // Exit if there was an error.
+// It is critical to handle the error case first.
+if err != nil {
+	// A best practice is to specifically check for the ErrNotFound error.
+	// This allows you to distinguish between "not found" and other database failures.
+	if errors.Is(err, neopersist.ErrNotFound) {
+		fmt.Printf("User with ID '%s' was not found.\n", userToCreate.UserID)
+	} else {
+		// Handle any other potential errors (e.g., connection issues).
+		fmt.Printf("An unexpected error occurred while searching for the user: %v\n", err)
 	}
+	return // Exit if there was an error.
+}
 
 
 
@@ -222,6 +222,8 @@ func main() {
     jsonOutput, _ := json.MarshalIndent(graphResult, "", "  ")
     fmt.Println(string(jsonOutput))
 }
+```
+
 This produces a clean JSON output that explicitly defines the graphs nodes and edges, ready for any client application to consume:
 ```json
 {
