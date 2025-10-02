@@ -378,3 +378,249 @@ func (r *Repository[T]) Find(ctx context.Context, qb *gocypher.QueryBuilder) ([]
 
 	return entities, nil
 }
+
+// FindOne executes a query expected to return a single entity.
+// It uses the same intelligent mapping as the Find method but validates the result set.
+//
+// This method is ideal for finding entities by unique properties other than the primary key
+// (e.g., finding a user by their unique email address).
+//
+// Returns:
+//   - A pointer to the found entity if exactly one record is returned.
+//   - An ErrNotFound error if the query returns zero records.
+//   - An error if the query returns more than one record, indicating a data consistency issue.
+//   - Any other error encountered during query execution or mapping.
+func (r *Repository[T]) FindOne(ctx context.Context, qb *gocypher.QueryBuilder) (*T, error) {
+	query, params, err := qb.Build()
+	if err != nil {
+		return nil, fmt.Errorf("could not build query: %w", err)
+	}
+
+	eagerResult, err := r.runner.Run(ctx, query, params)
+	if err != nil {
+		return nil, err // This will propagate ErrNotFound from the runner if applicable.
+	}
+
+	// --- Result Validation ---
+	if len(eagerResult.Records) == 0 {
+		return nil, ErrNotFound
+	}
+	if len(eagerResult.Records) > 1 {
+		return nil, fmt.Errorf("expected 1 record but found %d", len(eagerResult.Records))
+	}
+
+	// --- Mapping Logic (reused from Find) ---
+	record := eagerResult.Records[0]
+	entity := new(T)
+	val := reflect.ValueOf(entity).Elem()
+
+	var mappedFromNode bool
+	for _, value := range record.Values {
+		if node, ok := value.(neo4j.Node); ok {
+			if err := mapNodeToStruct(node, entity, r.meta); err != nil {
+				return nil, err
+			}
+			mappedFromNode = true
+			break
+		}
+	}
+
+	if !mappedFromNode {
+		for goFieldName, neo4jPropName := range r.meta.Mappings {
+			field := val.FieldByName(goFieldName)
+			var foundValue any
+			var found bool
+			for _, key := range record.Keys {
+				if key == neo4jPropName || strings.HasSuffix(key, "."+neo4jPropName) {
+					foundValue, found = record.Get(key)
+					break
+				}
+			}
+			if found && field.IsValid() && field.CanSet() {
+				if foundValue != nil {
+					field.Set(reflect.ValueOf(foundValue))
+				}
+			}
+		}
+	}
+
+	return entity, nil
+}
+
+// FindFirst executes a query and returns only the first entity found, ignoring any
+// additional results. It is useful for queries with ordering and limits where you
+// only care about the top result (e.g., finding the most recently created post).
+//
+// Unlike FindOne, this method will not return an error if the query finds more
+// than one record; it will simply map and return the first one in the result set.
+//
+// Returns:
+//   - A pointer to the first found entity.
+//   - An ErrNotFound error if the query returns zero records.
+//   - Any other error encountered during query execution or mapping.
+func (r *Repository[T]) FindFirst(ctx context.Context, qb *gocypher.QueryBuilder) (*T, error) {
+	query, params, err := qb.Build()
+	if err != nil {
+		return nil, fmt.Errorf("could not build query: %w", err)
+	}
+
+	eagerResult, err := r.runner.Run(ctx, query, params)
+	if err != nil {
+		return nil, err // This will propagate ErrNotFound from the runner if applicable.
+	}
+
+	// --- Result Validation ---
+	if len(eagerResult.Records) == 0 {
+		return nil, ErrNotFound
+	}
+	// Note: We do NOT check for len > 1. We intentionally take the first result.
+
+	// --- Mapping Logic (same as FindOne) ---
+	record := eagerResult.Records[0]
+	entity := new(T)
+	val := reflect.ValueOf(entity).Elem()
+
+	var mappedFromNode bool
+	for _, value := range record.Values {
+		if node, ok := value.(neo4j.Node); ok {
+			if err := mapNodeToStruct(node, entity, r.meta); err != nil {
+				return nil, err
+			}
+			mappedFromNode = true
+			break
+		}
+	}
+
+	if !mappedFromNode {
+		for goFieldName, neo4jPropName := range r.meta.Mappings {
+			field := val.FieldByName(goFieldName)
+			var foundValue any
+			var found bool
+			for _, key := range record.Keys {
+				if key == neo4jPropName || strings.HasSuffix(key, "."+neo4jPropName) {
+					foundValue, found = record.Get(key)
+					break
+				}
+			}
+			if found && field.IsValid() && field.CanSet() {
+				if foundValue != nil {
+					field.Set(reflect.ValueOf(foundValue))
+				}
+			}
+		}
+	}
+
+	return entity, nil
+}
+
+// Count returns the total number of entities of type T in the database.
+// It performs a `MATCH (n:Label) RETURN count(n)` query.
+func (r *Repository[T]) Count(ctx context.Context) (int64, error) {
+	qb := gocypher.NewQueryBuilder().
+		Match(gocypher.N("n", r.meta.Label)).
+		Return("count(n) AS count")
+
+	query, params, err := qb.Build()
+	if err != nil {
+		return 0, fmt.Errorf("could not build count query: %w", err)
+	}
+
+	// We use the raw runner because we expect a number, not an entity.
+	eagerResult, err := r.runner.Run(ctx, query, params)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(eagerResult.Records) == 0 {
+		// This case is unlikely for a count query but is a safe check.
+		return 0, nil
+	}
+
+	record := eagerResult.Records[0]
+	countValue, ok := record.Get("count")
+	if !ok {
+		return 0, fmt.Errorf("count value not found in query result")
+	}
+
+	return countValue.(int64), nil
+}
+
+// CountByProperty returns the number of entities of type T that match a specific
+// property-value pair.
+//
+// Parameters:
+//   - propName: The name of the property in the Neo4j node.
+//   - propValue: The value to match for the given property.
+func (r *Repository[T]) CountByProperty(ctx context.Context, propName string, propValue interface{}) (int64, error) {
+	// ... (puedes añadir la misma validación de propiedad que en FindByProperty) ...
+
+	props := map[string]interface{}{propName: propValue}
+	qb := gocypher.NewQueryBuilder().
+		Match(gocypher.N("n", r.meta.Label).WithProperties(props)).
+		Return("count(n) AS count")
+
+	query, params, err := qb.Build()
+	if err != nil {
+		return 0, fmt.Errorf("could not build count query: %w", err)
+	}
+
+	eagerResult, err := r.runner.Run(ctx, query, params)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(eagerResult.Records) == 0 {
+		return 0, nil
+	}
+
+	record := eagerResult.Records[0]
+	countValue, ok := record.Get("count")
+	if !ok {
+		return 0, fmt.Errorf("count value not found in query result")
+	}
+
+	return countValue.(int64), nil
+}
+
+// CountWithQuery executes a custom query and returns the resulting count.
+// This method is the flexible counterpart to the simple Count() and CountByProperty() methods.
+// The provided QueryBuilder is expected to define the MATCH and WHERE logic, and crucially,
+// it MUST include a RETURN clause that returns a single numerical value with the
+// alias "count".
+//
+// Example:
+//
+//	qb := gocypher.NewQueryBuilder().
+//	    Match(gocypher.N("u", "User")).
+//	    Where("u.age > 30").
+//	    Return("count(u) AS count") // The "AS count" is required.
+//	total, err := userRepo.CountWithQuery(ctx, qb)
+func (r *Repository[T]) CountWithQuery(ctx context.Context, qb *gocypher.QueryBuilder) (int64, error) {
+	query, params, err := qb.Build()
+	if err != nil {
+		return 0, fmt.Errorf("could not build count query: %w", err)
+	}
+
+	// We use the raw runner because we expect a number, not an entity.
+	eagerResult, err := r.runner.Run(ctx, query, params)
+	if err != nil {
+		// If the query returns no rows (e.g., MATCH fails), the count is 0.
+		if errors.Is(err, ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	if len(eagerResult.Records) == 0 {
+		return 0, nil // A successful query with no records means a count of 0.
+	}
+
+	// The query should return a single record with a single "count" value.
+	record := eagerResult.Records[0]
+	countValue, ok := record.Get("count")
+	if !ok {
+		return 0, fmt.Errorf("a 'count' value was not returned by the query; ensure your query includes 'RETURN count(...) AS count'")
+	}
+
+	return countValue.(int64), nil
+}

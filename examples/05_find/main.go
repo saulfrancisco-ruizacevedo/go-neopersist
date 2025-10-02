@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -20,7 +21,7 @@ func main() {
 	// --- 1. Database Setup ---
 	uri := "neo4j://localhost:7687"
 	username := "neo4j"
-	password := "your_password" // Replace with your password
+	password := "taco1234" // Replace with your password
 	dbName := "neo4j"
 	ctx := context.Background()
 
@@ -64,8 +65,6 @@ func main() {
 
 	// --- 4. Example: Using FindByProperty ---
 	fmt.Println("\n--- Using FindByProperty ---")
-	// We want to find all users where the 'email' property is 'alice@example.com'.
-	// This should return two users: Alice and Charlie.
 	emailToFind := "alice@example.com"
 	fmt.Printf("Searching for users with email: '%s'\n", emailToFind)
 	usersByEmail, err := userRepo.FindByProperty(ctx, "email", emailToFind)
@@ -80,14 +79,11 @@ func main() {
 
 	// --- 5. Example: Using Find with a Custom Query ---
 	fmt.Println("\n--- Using Find with a Custom Query ---")
-	// Here, we build a query to find all users with the name "Charlie".
-	// This demonstrates the flexibility of passing a custom-built query to the repository.
 	fmt.Println("Searching for users with name 'Charlie' using a custom query builder...")
 	qb := gocypher.NewQueryBuilder().
 		Match(gocypher.N("u", "User").WithProperties(map[string]interface{}{"name": "Charlie"})).
 		Return("u")
 
-	// The Find method executes the query and maps the resulting nodes to User structs.
 	foundUsers, err := userRepo.Find(ctx, qb)
 	if err != nil {
 		log.Fatalf("Error calling Find: %v", err)
@@ -98,30 +94,37 @@ func main() {
 		fmt.Printf("  - User: %+v\n", *user)
 	}
 
-	// --- 6. Example: Using Find with a Custom Query ---
-	fmt.Println("\n--- Using Find with a Custom Query To Return Partial Data ---")
-	// Here, we build a query to find all users name with the name "Charlie".
-	// This demonstrates the flexibility of passing a custom-built query to the repository.
-	fmt.Println("Searching for users with name 'Charlie' using a custom query builder returning only its name...")
-	qb = gocypher.NewQueryBuilder().
-		Match(gocypher.N("u", "User").WithProperties(map[string]interface{}{"name": "Charlie"})).
-		Return("u.name")
+	// --- 6. Example: Using FindOne for Unique Results ---
+	fmt.Println("\n--- Using FindOne for a Unique Result ---")
+	// FindOne is perfect for queries that should only ever return a single result,
+	// like searching by a unique ID.
+	userIdToFind := "user-find-2" // We'll find Bob
+	fmt.Printf("Searching for a single user with UserID: '%s'\n", userIdToFind)
 
-	// The Find method executes the query and maps the resulting nodes to User structs.
-	foundUsers, err = userRepo.Find(ctx, qb)
+	qbOne := gocypher.NewQueryBuilder().
+		Match(gocypher.N("u", "User").WithProperties(map[string]interface{}{"userId": userIdToFind})).
+		Return("u")
+
+	// The call is simpler: it returns a single user or an error.
+	foundUser, err := userRepo.FindOne(ctx, qbOne)
 	if err != nil {
-		log.Fatalf("Error calling Find: %v", err)
+		// FindOne automatically handles the "zero results" and "multiple results" cases.
+		if errors.Is(err, neopersist.ErrNotFound) {
+			fmt.Printf("User with ID '%s' was not found.\n", userIdToFind)
+		} else {
+			fmt.Printf("An unexpected error occurred: %v\n", err)
+		}
+	} else {
+		// If no error, we have our user directly. No need to check slice length.
+		fmt.Printf("FindOne found user: %+v\n", *foundUser)
 	}
 
-	fmt.Printf("Custom Find query found %d users:\n", len(foundUsers))
-	for _, user := range foundUsers {
-		fmt.Printf("  - User: %+v\n", *user)
-	}
-
-	// --- 6. Cleanup ---
+	// --- 7. Cleanup ---
 	fmt.Println("\n--- Cleaning up created users ---")
 	for _, u := range usersToCreate {
-		userRepo.Delete(ctx, u.UserID)
+		if err := userRepo.Delete(ctx, u.UserID); err != nil {
+			fmt.Printf("Warning: failed to delete user %s: %v\n", u.UserID, err)
+		}
 	}
 	fmt.Println("Cleanup complete.")
 }
