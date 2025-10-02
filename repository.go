@@ -624,3 +624,53 @@ func (r *Repository[T]) CountWithQuery(ctx context.Context, qb *gocypher.QueryBu
 
 	return countValue.(int64), nil
 }
+
+// SaveAll creates or updates a slice of entities in a single, efficient database call.
+// It uses an UNWIND + MERGE Cypher query to perform a bulk "upsert" operation.
+// This is significantly more performant than calling Save in a loop.
+//
+// Parameters:
+//   - ctx: The context for the query execution.
+//   - entities: A slice of pointers to the struct instances to be saved.
+//
+// Returns:
+//
+//	An error if the query execution fails.
+func (r *Repository[T]) SaveAll(ctx context.Context, entities []*T) error {
+	if len(entities) == 0 {
+		return nil // Nothing to do.
+	}
+
+	// 1. Create a list of maps, where each map represents the properties of an entity.
+	// This list will be passed as a single parameter to the Cypher query.
+	var propsList []map[string]interface{}
+	for _, entity := range entities {
+		val := reflect.ValueOf(entity).Elem()
+		props := make(map[string]interface{})
+		for fieldName, propName := range r.meta.Mappings {
+			props[propName] = val.FieldByName(fieldName).Interface()
+		}
+		propsList = append(propsList, props)
+	}
+
+	// 2. Construct the UNWIND query.
+	// UNWIND turns the list of maps into individual rows.
+	// MERGE finds a node by its primary key or creates it if it doesn't exist.
+	// SET updates all properties for both new and existing nodes.
+	query := fmt.Sprintf(
+		"UNWIND $propsList AS props\n"+
+			"MERGE (n:%s {%s: props.%s})\n"+
+			"SET n = props",
+		r.meta.Label,
+		r.meta.PKProp,
+		r.meta.PKProp,
+	)
+
+	params := map[string]interface{}{
+		"propsList": propsList,
+	}
+
+	// 3. Execute the bulk operation.
+	_, err := r.runner.Run(ctx, query, params)
+	return err
+}
