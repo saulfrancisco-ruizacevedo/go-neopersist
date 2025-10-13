@@ -2,3 +2,5 @@ github.com/neo4j/neo4j-go-driver/v5 v5.28.3 h1:OHP/vzX0oZ2YUY5DnGUp7QY21BIpOzw+P
 github.com/neo4j/neo4j-go-driver/v5 v5.28.3/go.mod h1:Vff8OwT7QpLm7L2yYr85XNWe9Rbqlbeb9asNXJTHO4k=
 github.com/saulfrancisco-ruizacevedo/gocypher v1.0.0 h1:XI88wHuSGCazudMZcOwpHtDscuWpJKEQk8Lyw/Hkq+E=
 github.com/saulfrancisco-ruizacevedo/gocypher v1.0.0/go.mod h1:24Aig/wu3eAQ69WaWIbjS2kamHAmcjgJGGoAQ8ENTY4=
+github.com/saulfrancisco-ruizacevedo/gocypher v1.1.0 h1:+rjanUAslOhmCQjiTXUpcWOapSh+rwji+9wUf48PQDo=
+github.com/saulfrancisco-ruizacevedo/gocypher v1.1.0/go.mod h1:24Aig/wu3eAQ69WaWIbjS2kamHAmcjgJGGoAQ8ENTY4=
